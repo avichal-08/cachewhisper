@@ -47,6 +47,19 @@ function expand(bits: number[], repeat: number): number[] {
   return out;
 }
 
+// no point running out the clock once the key is out of quota
+export class QuotaError extends Error {
+  constructor() { super("api quota exhausted, run stopped"); }
+}
+
+// api errors come back as a json blob; keep it to something that fits a row
+function shortError(err: any): string {
+  const msg = String(err?.message ?? err);
+  const code = msg.match(/"code":\s*(\d+)/)?.[1] ?? (err?.status ? String(err.status) : "");
+  if (code === "429" || /RESOURCE_EXHAUSTED|quota/i.test(msg)) return "429 quota exhausted";
+  return (code ? `${code} ` : "") + msg.slice(0, 80);
+}
+
 function mean(xs: number[]): number {
   return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
 }
@@ -65,10 +78,12 @@ export async function runSender(
     const base: SlotEvent = { role: "alice", slot: k, totalSlots: bits.length, bit, truthBit: bit };
     if (bit === 1) {
       try {
-        const { cachedTokens } = await backend.warm(prefix(epoch, k));
+        const { cachedTokens } = await backend.warm(prefix(epoch, k, cfg.blobLines));
         onEvent({ ...base, action: "warm", cachedTokens, note: "warmed cache" });
       } catch (err: any) {
-        onEvent({ ...base, action: "warm", note: `warm error: ${err?.message ?? err}` });
+        const note = `warm error: ${shortError(err)}`;
+        onEvent({ ...base, action: "warm", note });
+        if (note.includes("429")) throw new QuotaError();
       }
     } else {
       onEvent({ ...base, action: "idle", note: "stayed silent" });
@@ -90,10 +105,11 @@ export async function runReceiver(
   for (let k = 0; k < total; k++) {
     await sleepUntil(slotStart(epoch, k, cfg) + cfg.slotMs / 2);
     let r = { ttftMs: 0, cachedTokens: 0 };
+    let note: string | undefined;
     try {
-      r = await backend.probe(prefix(epoch, k));
+      r = await backend.probe(prefix(epoch, k, cfg.blobLines));
     } catch (err: any) {
-      onEvent({ role: "bob", slot: k, totalSlots: total, action: "probe", note: `probe error: ${err?.message ?? err}` });
+      note = `probe error: ${shortError(err)}`;
     }
     probed.push(r);
     const provisionalHit = r.cachedTokens > 0;
@@ -107,7 +123,9 @@ export async function runReceiver(
       hit: provisionalHit,
       bit: provisionalHit ? 1 : 0,
       truthBit: truth[k],
+      note,
     });
+    if (note?.includes("429")) throw new QuotaError();
   }
 
   // calibrate ttft threshold from the known preamble

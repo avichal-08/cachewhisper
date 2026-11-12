@@ -2,7 +2,7 @@
 // build identical prompt prefixes. it's the only thing they share besides a
 // clock and the api key.
 
-export type Provider = "gemini" | "openrouter";
+export type Provider = "gemini" | "openrouter" | "local";
 
 export interface Config {
   provider: Provider;
@@ -11,41 +11,53 @@ export interface Config {
   secret: string;
   preamble: number[];
   repeat: number;
+  blobLines: number;
 }
 
 const MODEL: Record<Provider, string> = {
-  gemini: "gemini-2.5-flash-lite",
+  // 2.5-flash: implicit cache hits are deterministic (full 7160 tokens). 3.5-flash-lite
+  // only hit about half the time in testing, which is useless for a channel.
+  gemini: "gemini-2.5-flash",
   openrouter: "google/gemini-2.5-flash",
+  local: "qwen2.5-0.5b-instruct",
 };
 
 export function makeConfig(over: Partial<Config> = {}): Config {
   const provider = (over.provider ?? (process.env.CW_PROVIDER as Provider) ?? "gemini") as Provider;
   return {
     provider,
-    model: over.model ?? MODEL[provider],
-    slotMs: over.slotMs ?? Number(process.env.CW_SLOT_MS ?? 12000),
+    model: over.model ?? process.env.CW_MODEL ?? MODEL[provider],
+    // 20s keeps a run under the free tier's 5 requests/minute. with billing on, go lower.
+    slotMs: over.slotMs ?? Number(process.env.CW_SLOT_MS ?? 20000),
     secret: over.secret ?? process.env.CW_SECRET ?? "A",
     preamble: over.preamble ?? [1, 0],
     repeat: over.repeat ?? Number(process.env.CW_REPEAT ?? 1),
+    // a cold prompt on a cpu runs about 40 tokens/s, so the local prompt stays short
+    blobLines: over.blobLines ?? (provider === "local" ? 5 : 360),
   };
 }
 
 // fixed ~3k-token filler, generated deterministically so both sides match.
 // pushes each slot's prefix past gemini's 1024-token cache floor.
-function buildBlob(): string {
+function buildBlob(lines: number): string {
   const line =
     "The quick brown fox audits the shared cache while twelve wizards jam the vexing lexicon. ";
   let s = "";
-  for (let i = 0; i < 360; i++) s += `${String(i).padStart(4, "0")} ${line}`;
+  for (let i = 0; i < lines; i++) s += `${String(i).padStart(4, "0")} ${line}`;
   return s;
 }
-const BLOB = buildBlob();
+const blobs = new Map<number, string>();
+function blob(lines: number): string {
+  let b = blobs.get(lines);
+  if (b === undefined) { b = buildBlob(lines); blobs.set(lines, b); }
+  return b;
+}
 
 // nonce (epoch + slot) goes first so each slot is its own cache entry keyed from
 // byte 0. that stops the shared filler from causing cross-slot hits, and the
 // epoch salts the run so old cache isn't read as a live bit.
-export function prefix(epoch: number, k: number): string {
-  return `cachewhisper//epoch=${epoch}//slot=${k}//begin\n${BLOB}\ncachewhisper//epoch=${epoch}//slot=${k}//end`;
+export function prefix(epoch: number, k: number, lines = 360): string {
+  return `cachewhisper//epoch=${epoch}//slot=${k}//begin\n${blob(lines)}\ncachewhisper//epoch=${epoch}//slot=${k}//end`;
 }
 
 // ascii, msb first
