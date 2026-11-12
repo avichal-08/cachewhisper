@@ -14,7 +14,7 @@ export interface Config {
 }
 
 const MODEL: Record<Provider, string> = {
-  gemini: "gemini-2.5-flash",
+  gemini: "gemini-2.5-flash-lite",
   openrouter: "google/gemini-2.5-flash",
 };
 
@@ -24,8 +24,8 @@ export function makeConfig(over: Partial<Config> = {}): Config {
     provider,
     model: over.model ?? MODEL[provider],
     slotMs: over.slotMs ?? Number(process.env.CW_SLOT_MS ?? 12000),
-    secret: over.secret ?? process.env.CW_SECRET ?? "hi",
-    preamble: over.preamble ?? [1, 0, 1, 0, 1, 0, 1, 0],
+    secret: over.secret ?? process.env.CW_SECRET ?? "A",
+    preamble: over.preamble ?? [1, 0],
     repeat: over.repeat ?? Number(process.env.CW_REPEAT ?? 1),
   };
 }
@@ -83,4 +83,12 @@ export function payloadBitCount(cfg: Config): number {
 
 export function slotStart(epoch: number, k: number, cfg: Config): number {
   return epoch + k * cfg.slotMs;
+}
+
+// rough api-call budget for one run: bob probes every slot, alice warms the
+// 1-bits. both hit the same key, so the free-tier 20/day cap applies to the sum.
+export function estimateDailyCalls(cfg: Config): number {
+  const frame = frameBits(cfg);
+  const warms = frame.reduce((a, b) => a + b, 0);
+  return frame.length + warms;
 }

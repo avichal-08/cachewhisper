@@ -21,7 +21,7 @@ type Result = {
   meanMissTtft: number;
 };
 
-const PREAMBLE_LEN = 8; // repeat=1 in the dashboard
+const PREAMBLE_LEN = 2; // 2-slot sanity marker
 
 function liveDecode(bobSlots: Slot[]): string {
   const bits = bobSlots
@@ -40,7 +40,7 @@ function liveDecode(bobSlots: Slot[]): string {
 
 export default function Page() {
   const [provider, setProvider] = useState("gemini");
-  const [secret, setSecret] = useState("hi");
+  const [secret, setSecret] = useState("A");
   const [slotSec, setSlotSec] = useState(8);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string>("");

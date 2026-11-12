@@ -1,5 +1,5 @@
 // receiver
-import { makeConfig, type Provider } from "./codebook";
+import { makeConfig, estimateDailyCalls, type Provider } from "./codebook";
 import { makeBackend } from "./provider";
 import { runReceiver } from "./protocol";
 import { arg, resolveEpoch } from "./cli";
@@ -10,9 +10,11 @@ async function main() {
   const cfg = makeConfig({ ...(provider ? { provider } : {}), ...(secret ? { secret } : {}) });
   const epoch = resolveEpoch();
   const backend = makeBackend(cfg);
+  const calls = estimateDailyCalls(cfg);
 
   console.log(`[bob] provider=${cfg.provider} model=${cfg.model}`);
   console.log(`[bob] slotMs=${cfg.slotMs} repeat=${cfg.repeat}`);
+  console.log(`[bob] ~${calls} api calls this run (both agents, one key) ${calls > 20 ? "WARNING: over free-tier 20/day" : "fits free-tier 20/day"}`);
   console.log(`[bob] epoch=${epoch} (starts in ${((epoch - Date.now()) / 1000).toFixed(1)}s)`);
 
   const result = await runReceiver(cfg, epoch, backend, (e) => {
