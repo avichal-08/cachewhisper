@@ -29,59 +29,64 @@ The physical meaning of a 1 is "this prompt was already in the model's cache."
 ## How it works in code
 
 - `src/codebook.ts` builds the per-slot prefixes. The nonce (epoch + slot index)
-  goes first, then ~7k tokens of fixed filler to clear the cache floor.
-  Nonce-first means each slot is its own cache entry, so the shared filler can't
+  goes first, then fixed filler: ~7k tokens on cloud models to clear their
+  cache floor, ~150 on the local model so a cold prompt stays fast. Nonce-first means each slot is its own cache entry, so the shared filler can't
   cause a cross-slot hit, and the epoch salts the run so old cache isn't read as
   a live bit.
-- `src/provider.ts` has `warm()` and `probe()` for Gemini (default) and
-  OpenRouter. A probe reports the cached-token count and the time-to-first-token.
+- `src/provider.ts` has `warm()` and `probe()` for a local llama-server
+  (recommended), Gemini and OpenRouter. A probe reports the cached-token count and
+  the time-to-first-token.
 - `src/protocol.ts` runs the time-slots: alice warms in the first half, bob
   probes in the second half. A 2-slot `[1, 0]` marker lets bob confirm the signal
   is live; decoding uses the cached-token count, which is deterministic.
 
 ## Run it
 
-Needs [Bun](https://bun.sh) and a free
-[Google AI Studio key](https://aistudio.google.com/apikey).
+Use the local model. It is free, has no quota, and its cache is deterministic, so
+every take works. Needs [Bun](https://bun.sh).
+
+1. Get `llama-server` (the CPU build from the
+   [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases)) and a
+   small model such as
+   [Qwen2.5-0.5B-Instruct Q4_K_M](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF),
+   about 490 MB.
+2. Start it with one slot, so the shared cache is a single known place:
+
+```bash
+llama-server -m qwen2.5-0.5b-instruct-q4_k_m.gguf -c 4096 -np 1 --host 127.0.0.1 --port 8081
+```
+
+3. Start the app:
 
 ```bash
 bun install
-cp .env.example .env    # add GEMINI_API_KEY
-```
-
-Dashboard:
-
-```bash
+cp .env.example .env    # set CW_PROVIDER=local
 bun run dev             # http://localhost:3000
 ```
 
-Two-process CLI (start both within the same ~30s window so the slot clocks line
-up, or pass a matching `--epoch`):
+Open `/alice` and `/bob` in two windows and press Start on each within a few
+seconds. A hit comes back in about 0.1s and a miss takes about 4s on a CPU, so the
+difference shows on screen.
+
+Two-process CLI instead of the pages (start both in the same ~30s window, or pass
+a matching `--epoch`):
 
 ```bash
 bun run bob
 bun run alice
 ```
 
-Flags: `--provider gemini|openrouter`, `--secret "A"`, `--epoch <ms>`.
-Env: `CW_PROVIDER`, `CW_SECRET`, `CW_SLOT_MS`, `CW_REPEAT`.
+Flags: `--provider local|gemini|openrouter`, `--secret "A"`, `--epoch <ms>`.
+Env: `CW_PROVIDER`, `CW_SECRET`, `CW_SLOT_MS`, `CW_REPEAT`, `CW_MODEL`,
+`LOCAL_LLM_URL`.
 
-## Free-tier reality
+## Cloud backends
 
-Measured on a free Google AI Studio key: the models that actually do implicit
-caching (the 2.5 family) are capped at **5 requests/minute and 20 requests/day,
-per model**. Models with bigger free quotas (Gemma, some 2.0/3.x tiers) don't do
-implicit caching, so they give no hit/miss signal.
-
-So the default is sized to fit: one ASCII character plus the 2-slot marker is
-10 slots, which costs under 20 calls across both agents (bob probes every slot,
-alice warms the 1-bits). That is the most you can send per day on a free key.
-Both CLIs print the estimated call count at startup and warn if a longer secret
-would exceed the cap. For longer messages, add billing to the key (removes the
-cap) or use the OpenRouter backend.
-
-Timing is noisy on these models (a hit is sometimes slower than a miss), which is
-why the cached-token count is the primary signal and timing is only a backup.
+Gemini and OpenRouter work too (`CW_PROVIDER=gemini`, key in `.env`), but they are
+a poor fit for repeated takes. A free Gemini key allows about 20 calls a day on
+the models that cache, which is one character, and implicit caching is best
+effort, so a hit is not guaranteed. Use local unless you want to show it on a
+hosted model.
 
 ## Mitigations
 
