@@ -12,7 +12,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const provider = (url.searchParams.get("provider") as Provider) || "gemini";
   const secret = url.searchParams.get("secret") || "hi";
-  const slotMs = Number(url.searchParams.get("slotMs") || 8000);
+  const slotMs = Number(url.searchParams.get("slotMs") || 20000);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
